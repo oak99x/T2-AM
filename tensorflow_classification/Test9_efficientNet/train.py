@@ -31,7 +31,7 @@ def main():
     im_height = im_width = img_size[num_model]
     batch_size = 16
     epochs = 30
-    num_classes = 5
+    num_classes = 23  # Alterando numero para nosso dataset
     freeze_layers = True
     initial_lr = 0.01
 
