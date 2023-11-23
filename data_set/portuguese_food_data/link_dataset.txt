@@ -1,4 +1,0 @@
-extrair dataset na pasta atual e mudar nome da pasta extraida para portuguese_food_photos
-
-Dataset:
-https://drive.google.com/file/d/15Nva1CURmLtFWJslu_wheY3qkTkrew3f/view?usp=sharing

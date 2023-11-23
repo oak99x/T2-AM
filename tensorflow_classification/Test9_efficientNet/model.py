@@ -4,47 +4,58 @@ from typing import Union
 from tensorflow.keras import layers, Model
 
 
+# Inicializador de kernel para camadas Conv2D
 CONV_KERNEL_INITIALIZER = {
-    'class_name': 'VarianceScaling',
+    'class_name': 'VarianceScaling',  # Utiliza a estratégia VarianceScaling para inicialização
     'config': {
-        'scale': 2.0,
-        'mode': 'fan_out',
-        'distribution': 'truncated_normal'
+        'scale': 2.0,                 # Fator de escala para a variância da distribuição
+        'mode': 'fan_out',            # Modo de cálculo de fan-out (número de unidades de saída)
+        'distribution': 'truncated_normal'  # Distribuição utilizada para inicialização
     }
 }
 
+# Inicializador de kernel para camadas Dense
 DENSE_KERNEL_INITIALIZER = {
-    'class_name': 'VarianceScaling',
+    'class_name': 'VarianceScaling',  # Utiliza a estratégia VarianceScaling para inicialização
     'config': {
-        'scale': 1. / 3.,
-        'mode': 'fan_out',
-        'distribution': 'uniform'
+        'scale': 1. / 3.,              # Fator de escala para a variância da distribuição
+        'mode': 'fan_out',            # Modo de cálculo de fan-out (número de unidades de saída)
+        'distribution': 'uniform'      # Distribuição utilizada para inicialização
     }
 }
 
 
+# Uma função utilitária que calcula o zero-padding necessário para convolução 2D com downsampling.
 def correct_pad(input_size: Union[int, tuple], kernel_size: int):
-    """Returns a tuple for zero-padding for 2D convolution with downsampling.
+    """Retorna uma tupla para zero-padding para convolução 2D com downsampling.
 
-    Arguments:
-      input_size: Input tensor size.
-      kernel_size: An integer or tuple/list of 2 integers.
+    Argumentos:
+      input_size: Tamanho do tensor de entrada.
+      kernel_size: Um inteiro ou tupla/lista de 2 inteiros.
 
-    Returns:
-      A tuple.
+    Retorna:
+      Uma tupla.
     """
 
+    # Se o tamanho de entrada for um número inteiro, converte para uma tupla (height, width)
     if isinstance(input_size, int):
         input_size = (input_size, input_size)
 
+    # Converte o tamanho do kernel para uma tupla (kernel_height, kernel_width)
     kernel_size = (kernel_size, kernel_size)
 
+    # Calcula os ajustes necessários com base na paridade do tamanho de entrada e do kernel
     adjust = (1 - input_size[0] % 2, 1 - input_size[1] % 2)
+
+    # Calcula o zero-padding correto para a altura e largura
     correct = (kernel_size[0] // 2, kernel_size[1] // 2)
+
+    # Retorna uma tupla contendo as informações de zero-padding para a convolução 2D
     return ((correct[0] - adjust[0], correct[0]),
             (correct[1] - adjust[1], correct[1]))
 
 
+# Esta função implementa um bloco residual invertido, um componente fundamental da arquitetura EfficientNet.
 def block(inputs,
           activation: str = "swish",
           drop_rate: float = 0.,
@@ -58,25 +69,26 @@ def block(inputs,
           se_ratio: float = 0.25):
     """An inverted residual block.
 
-      Arguments:
-          inputs: input tensor.
-          activation: activation function.
-          drop_rate: float between 0 and 1, fraction of the input units to drop.
-          name: string, block label.
-          input_channel: integer, the number of input filters.
-          output_channel: integer, the number of output filters.
-          kernel_size: integer, the dimension of the convolution window.
-          strides: integer, the stride of the convolution.
-          expand_ratio: integer, scaling coefficient for the input filters.
-          use_se: whether to use se
-          se_ratio: float between 0 and 1, fraction to squeeze the input filters.
+      Argumentos:
+          inputs: tensor de entrada.
+          activation: função de ativação.
+          drop_rate: float entre 0 e 1, fração das unidades de entrada a serem descartadas.
+          name: string, rótulo do bloco.
+          input_channel: inteiro, número de filtros de entrada.
+          output_channel: inteiro, número de filtros de saída.
+          kernel_size: inteiro, a dimensão da janela de convolução.
+          strides: inteiro, o passo da convolução.
+          expand_ratio: inteiro, coeficiente de escala para os filtros de entrada.
+          use_se: se deve usar se.
+          se_ratio: float entre 0 e 1, fração para reduzir os filtros de entrada.
 
-      Returns:
-          output tensor for the block.
-      """
-    # Expansion phase
+      Retorna:
+          tensor de saída para o bloco.
+    """
+    # Fase de Expansão
     filters = input_channel * expand_ratio
     if expand_ratio != 1:
+        # Aplica convolução 1x1 para expandir o número de canais (filtros)
         x = layers.Conv2D(filters=filters,
                           kernel_size=1,
                           padding="same",
@@ -86,13 +98,16 @@ def block(inputs,
         x = layers.BatchNormalization(name=name + "expand_bn")(x)
         x = layers.Activation(activation, name=name + "expand_activation")(x)
     else:
+        # Se não houver expansão, mantém a entrada inalterada
         x = inputs
 
-    # Depthwise Convolution
+    # Convolução Profunda
     if strides == 2:
+        # Adiciona zero-padding para lidar com o downsampling
         x = layers.ZeroPadding2D(padding=correct_pad(filters, kernel_size),
                                  name=name + "dwconv_pad")(x)
 
+    # Aplica convolução depthwise
     x = layers.DepthwiseConv2D(kernel_size=kernel_size,
                                strides=strides,
                                padding="same" if strides == 1 else "valid",
@@ -102,25 +117,31 @@ def block(inputs,
     x = layers.BatchNormalization(name=name + "bn")(x)
     x = layers.Activation(activation, name=name + "activation")(x)
 
+    # Squeeze-and-Excitation (SE)
     if use_se:
         filters_se = int(input_channel * se_ratio)
+        # Global Average Pooling para reduzir a dimensionalidade espacial
         se = layers.GlobalAveragePooling2D(name=name + "se_squeeze")(x)
         se = layers.Reshape((1, 1, filters), name=name + "se_reshape")(se)
+        # Redução de dimensionalidade linear
         se = layers.Conv2D(filters=filters_se,
                            kernel_size=1,
                            padding="same",
                            activation=activation,
                            kernel_initializer=CONV_KERNEL_INITIALIZER,
                            name=name + "se_reduce")(se)
+        # Expansão de dimensionalidade linear
         se = layers.Conv2D(filters=filters,
                            kernel_size=1,
                            padding="same",
                            activation="sigmoid",
                            kernel_initializer=CONV_KERNEL_INITIALIZER,
                            name=name + "se_expand")(se)
+        # Aplica o bloco SE ao tensor de entrada
         x = layers.multiply([x, se], name=name + "se_excite")
 
-    # Output phase
+    # Fase de Saída
+    # Aplica convolução 1x1 para projetar de volta ao número desejado de canais
     x = layers.Conv2D(filters=output_channel,
                       kernel_size=1,
                       padding="same",
@@ -128,16 +149,21 @@ def block(inputs,
                       kernel_initializer=CONV_KERNEL_INITIALIZER,
                       name=name + "project_conv")(x)
     x = layers.BatchNormalization(name=name + "project_bn")(x)
+
+    # Adiciona a entrada original se o número de canais não mudou e o stride é 1
     if strides == 1 and input_channel == output_channel:
         if drop_rate > 0:
+            # Aplica dropout se especificado
             x = layers.Dropout(rate=drop_rate,
-                               noise_shape=(None, 1, 1, 1),  # binary dropout mask
+                               noise_shape=(None, 1, 1, 1),  # máscara de dropout binário
                                name=name + "drop")(x)
+        # Adiciona a entrada original para a saída
         x = layers.add([x, inputs], name=name + "add")
 
     return x
 
 
+# Esta função é a principal responsável pela criação da arquitetura EfficientNet com base nos parâmetros fornecidos.
 def efficient_net(width_coefficient,
                   depth_coefficient,
                   input_shape=(224, 224, 3),
@@ -184,6 +210,7 @@ def efficient_net(width_coefficient,
                   [5, 4, 112, 192, 6, 2, True],
                   [3, 1, 192, 320, 6, 1, True]]
 
+    # Funções auxiliares para arredondar o número de filtros e repetições com base nos coeficientes de largura e profundidade.
     def round_filters(filters, divisor=8):
         """Round number of filters based on depth multiplier."""
         filters *= width_coefficient
